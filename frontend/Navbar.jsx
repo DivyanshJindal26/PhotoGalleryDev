@@ -26,7 +26,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
-provider.setCustomParameters({ hd: "students.iitmandi.ac.in" });
+provider.setCustomParameters({ hd: "iitmandi.ac.in" });
 
 const Navbar = () => {
   const [user, setUser] = useState(null);
