@@ -224,51 +224,95 @@ export default function ImageViewer({
   };
 
   const shareImage = async (photo) => {
-    const imageDownloadUrl = `/api/photos/${photo.fileId}/download`;
+    try {
+      const imageViewUrl = `/api/photos/${photo.fileId}/download`;
 
-    if (navigator.canShare && navigator.canShare({ files: [] })) {
-      try {
-        const response = await fetch(imageDownloadUrl);
-        if (!response.ok) throw new Error("Failed to fetch image for sharing.");
+      // Fetch the actual image
+      const response = await fetch(imageViewUrl);
+      if (!response.ok) throw new Error("Failed to fetch image for sharing.");
 
-        const blob = await response.blob();
-        const file = new File(
-          [blob],
-          photo.fileName || `photo-${photo.fileId}.jpg`,
-          {
-            type: blob.type,
-          }
-        );
+      const blob = await response.blob();
 
+      // Get proper file extension from content type or filename
+      const getFileExtension = (contentType, fileName) => {
+        if (fileName && fileName.includes(".")) {
+          return fileName.split(".").pop().toLowerCase();
+        }
+
+        const typeMap = {
+          "image/jpeg": "jpg",
+          "image/jpg": "jpg",
+          "image/png": "png",
+          "image/gif": "gif",
+          "image/webp": "webp",
+        };
+
+        return typeMap[contentType] || "jpg";
+      };
+
+      const extension = getFileExtension(blob.type, photo.fileName);
+      const fileName =
+        photo.fileName || `${photo.title || "photo"}.${extension}`;
+
+      // Create file with proper type
+      const file = new File([blob], fileName, {
+        type: blob.type || "image/jpeg",
+      });
+
+      // Check if native file sharing is supported
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        // Share the actual image file
         await navigator.share({
-          title: photo.title,
-          text: `Check out this photo: ${photo.title}`,
+          title: photo.title || "Shared Photo",
+          text: photo.title
+            ? `Check out this photo: ${photo.title}`
+            : "Check out this photo!",
           files: [file],
         });
-      } catch (error) {
-        toast(<ErrorToast message="Sharing failed." />);
-        console.error("Error sharing image:", error);
+        return;
       }
-    } else if (navigator.share) {
-      // Fallback: share URL instead
-      try {
-        await navigator.share({
-          title: photo.title,
-          text: `Check out this photo: ${photo.title}`,
-          url: `${window.location.origin}${imageDownloadUrl}`,
-        });
-      } catch (error) {
-        console.error("Error sharing link:", error);
+
+      // Fallback for browsers that support sharing but not files
+      if (navigator.share) {
+        // Create a temporary object URL for the image
+        const imageUrl = URL.createObjectURL(blob);
+
+        try {
+          await navigator.share({
+            title: photo.title || "Shared Photo",
+            text: photo.title
+              ? `Check out this photo: ${photo.title}`
+              : "Check out this photo!",
+            url: imageUrl,
+          });
+        } finally {
+          // Clean up the object URL
+          URL.revokeObjectURL(imageUrl);
+        }
+        return;
       }
-    } else {
-      // Fallback: copy download link
+
+      // Final fallback: download the image
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(downloadUrl);
+
+      toast(<SuccessToast message="Image downloaded to your device!" />);
+    } catch (error) {
+      console.error("Error sharing image:", error);
+
+      // Ultimate fallback: copy image URL to clipboard
       try {
-        await navigator.clipboard.writeText(
-          `${window.location.origin}${imageDownloadUrl}`
-        );
-        toast(<SuccessToast message="Download link copied to clipboard!" />);
-      } catch (error) {
-        toast(<ErrorToast message="Failed to copy link." />);
+        const imageViewUrl = `${window.location.origin}/api/photos/${photo.fileId}/view`;
+        await navigator.clipboard.writeText(imageViewUrl);
+        toast(<SuccessToast message="Image link copied to clipboard!" />);
+      } catch (clipboardError) {
+        toast(<ErrorToast message="Sharing failed. Please try again." />);
       }
     }
   };
@@ -369,7 +413,7 @@ export default function ImageViewer({
           goToNext();
           break;
         case "Escape":
-          onClose();
+          handleClose();
           break;
         case " ":
           e.preventDefault();
@@ -381,6 +425,40 @@ export default function ImageViewer({
     window.addEventListener("keydown", handleKeyPress);
     return () => window.removeEventListener("keydown", handleKeyPress);
   }, [goToPrevious, goToNext, onClose]);
+
+  // Handle browser back button and mobile back swipe
+  useEffect(() => {
+    // Push a history state immediately when modal opens
+    const currentUrl = window.location.href;
+    window.history.pushState(
+      { modalOpen: true, timestamp: Date.now() },
+      "",
+      currentUrl
+    );
+
+    const handlePopState = (event) => {
+      // Close modal when user navigates back
+      onClose();
+    };
+
+    // Add event listener
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      // Remove event listener
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [onClose]);
+
+  // Handle normal modal close
+  const handleClose = () => {
+    // Check if we can go back (our state should be in history)
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      onClose();
+    }
+  };
 
   if (!currentPhoto) return null;
 
@@ -451,7 +529,7 @@ export default function ImageViewer({
         </button>
 
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="cursor-pointer text-white hover:text-yellow-400 transition-colors p-2"
           title="Close"
         >
