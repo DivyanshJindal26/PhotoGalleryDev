@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FiX,
   FiPlay,
@@ -32,42 +32,134 @@ export default function ImageViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [touchStartX, setTouchStartX] = useState(null);
   const [touchEndX, setTouchEndX] = useState(null);
-  const [currentImageSrc, setCurrentImageSrc] = useState("");
 
   // Drag/Pan state for zoomed images
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
+  // Enhanced image caching state - completely background
+  const [cachedImages, setCachedImages] = useState(new Set());
+  const imageCache = useRef(new Map());
+  const preloadWorker = useRef(null);
+  const CACHE_RANGE = 5; // Reduced for faster initial loading
+  const PRIORITY_RANGE = 1; // Immediate neighbors only
+
   const currentPhoto = photos[currentIndex];
 
-  // Immediate image src update - no delays, no complex caching
+  // Aggressive background preloading - no delays, no blocking
+  const preloadImage = useCallback((photo) => {
+    const imageUrl = `/api/photos/${photo.fileId}/view`;
+
+    // Skip if already cached or loading
+    if (imageCache.current.has(imageUrl)) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+
+      img.onload = () => {
+        imageCache.current.set(imageUrl, img);
+        setCachedImages((prev) => new Set([...prev, photo.fileId]));
+        resolve();
+      };
+
+      img.onerror = () => resolve(); // Don't block on errors
+      img.src = imageUrl;
+    });
+  }, []);
+
+  // Immediate background preloading without queues or delays
   useEffect(() => {
-    if (!currentPhoto) return;
+    if (!photos.length || !currentPhoto) return;
 
-    const imageUrl = `/api/photos/${currentPhoto.fileId}/view`;
-    setCurrentImageSrc(imageUrl);
+    // Cancel any existing preload worker
+    if (preloadWorker.current) {
+      clearTimeout(preloadWorker.current);
+    }
 
-    // Background preload for next/prev images (non-blocking)
-    const preloadAdjacent = () => {
-      const nextIndex = (currentIndex + 1) % photos.length;
-      const prevIndex =
-        currentIndex === 0 ? photos.length - 1 : currentIndex - 1;
+    // Start immediate background preloading
+    preloadWorker.current = setTimeout(() => {
+      // Preload current image first (highest priority)
+      preloadImage(currentPhoto);
 
-      if (photos[nextIndex]) {
-        const nextImg = new Image();
-        nextImg.src = `/api/photos/${photos[nextIndex].fileId}/view`;
+      // Then preload adjacent images immediately
+      const adjacentIndices = [];
+      for (let offset = -PRIORITY_RANGE; offset <= PRIORITY_RANGE; offset++) {
+        const index = currentIndex + offset;
+        if (index >= 0 && index < photos.length && index !== currentIndex) {
+          adjacentIndices.push(index);
+        }
       }
 
-      if (photos[prevIndex]) {
-        const prevImg = new Image();
-        prevImg.src = `/api/photos/${photos[prevIndex].fileId}/view`;
+      // Preload adjacent images without waiting
+      adjacentIndices.forEach((index) => {
+        if (photos[index]) preloadImage(photos[index]);
+      });
+
+      // Preload remaining images in range (lower priority)
+      setTimeout(() => {
+        const startIndex = Math.max(0, currentIndex - CACHE_RANGE);
+        const endIndex = Math.min(
+          photos.length - 1,
+          currentIndex + CACHE_RANGE
+        );
+
+        for (let i = startIndex; i <= endIndex; i++) {
+          if (i !== currentIndex && !adjacentIndices.includes(i) && photos[i]) {
+            preloadImage(photos[i]);
+          }
+        }
+      }, 100); // Small delay for non-critical images
+    }, 0); // Start immediately
+
+    return () => {
+      if (preloadWorker.current) {
+        clearTimeout(preloadWorker.current);
+      }
+    };
+  }, [currentIndex, currentPhoto]); // Minimal dependencies
+
+  // Simplified cleanup - less aggressive to avoid interrupting navigation
+  useEffect(() => {
+    const cleanup = () => {
+      if (imageCache.current.size > photos.length * 0.8) {
+        // Only cleanup if cache is getting very large
+        const keepRange = CACHE_RANGE * 2;
+        const startKeep = Math.max(0, currentIndex - keepRange);
+        const endKeep = Math.min(photos.length - 1, currentIndex + keepRange);
+
+        const urlsToKeep = new Set();
+        for (let i = startKeep; i <= endKeep; i++) {
+          if (photos[i]) {
+            urlsToKeep.add(`/api/photos/${photos[i].fileId}/view`);
+          }
+        }
+
+        // Remove old cached images
+        for (const [url] of imageCache.current) {
+          if (!urlsToKeep.has(url)) {
+            imageCache.current.delete(url);
+          }
+        }
+
+        // Update cached images set
+        setCachedImages((prev) => {
+          const newSet = new Set();
+          for (let i = startKeep; i <= endKeep; i++) {
+            if (photos[i] && prev.has(photos[i].fileId)) {
+              newSet.add(photos[i].fileId);
+            }
+          }
+          return newSet;
+        });
       }
     };
 
-    // Preload in background without blocking
-    setTimeout(preloadAdjacent, 0);
-  }, [currentIndex, currentPhoto, photos]);
+    // Less frequent cleanup
+    const cleanupTimer = setTimeout(cleanup, 30000);
+    return () => clearTimeout(cleanupTimer);
+  }, [currentIndex]); // Only run when index changes
 
   // Check if the user is in fullscreen mode
   useEffect(() => {
@@ -369,7 +461,13 @@ export default function ImageViewer({
       {/* Main Image */}
       <div className="flex items-center justify-center w-full h-full">
         <img
-          src={currentImageSrc || "/placeholder.svg"}
+          src={(() => {
+            const imageUrl = `/api/photos/${
+              currentPhoto.fileId || "/placeholder.svg"
+            }/view`;
+            const cachedImg = imageCache.current.get(imageUrl);
+            return cachedImg ? cachedImg.src : imageUrl;
+          })()}
           alt={currentPhoto.fileName}
           className={`w-full h-full object-contain ${
             isZoomed
@@ -391,11 +489,15 @@ export default function ImageViewer({
         />
       </div>
       {/* Bottom Info */}
-      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 text-center text-white z-20">
-        <h2 className="text-2xl font-bold mb-2">{currentPhoto.title}</h2>
-        <p className="text-lg opacity-80 whitespace-nowrap overflow-x-auto">
-          {currentPhoto.event} | {currentPhoto.uploader}
-        </p>
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 text-center z-20 max-w-5xl px-6">
+        <div className="bg-black/60 backdrop-blur-sm rounded-lg px-8 py-5">
+          <h2 className="text-2xl font-bold mb-3 text-white drop-shadow-lg">
+            {currentPhoto.title}
+          </h2>
+          <p className="text-xl text-white/90 drop-shadow-lg">
+            {currentPhoto.event} | {currentPhoto.uploader}
+          </p>
+        </div>
       </div>
       {/* Bottom Right Controls */}
       <div className="absolute bottom-6 right-6 flex items-center gap-6 z-20">

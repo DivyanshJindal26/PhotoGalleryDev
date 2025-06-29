@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { FiCalendar, FiUser, FiImage } from "react-icons/fi";
+import { FiCalendar, FiUser, FiImage, FiType, FiTag } from "react-icons/fi";
 import ImageViewer from "./image-viewer";
 import { ErrorToast } from "../components/Toast";
 import { toast } from "react-toastify";
@@ -309,7 +309,7 @@ export default function GalleryWithViewer() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {displayedPhotos.map((photo) => (
                 <LazyPhotoCard
                   key={photo.fileId}
@@ -357,7 +357,7 @@ const LazyPhotoCard = ({ photo, onPhotoClick, onLike }) => {
       className="group relative bg-white/5 rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl hover:shadow-yellow-400/20"
       onClick={() => onPhotoClick(photo)}
     >
-      <div className="aspect-square relative overflow-hidden">
+      <div className="aspect-[5/3] relative overflow-hidden">
         <img
           src={`/api/photos/${photo.fileId}/view`}
           alt={photo.fileName}
@@ -393,32 +393,33 @@ const LazyPhotoCard = ({ photo, onPhotoClick, onLike }) => {
           style={{ margin: "1rem 1rem 1rem" }}
         >
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <FiUser className="text-yellow-400" size={14} />
-              <p className="text-yellow-400 font-semibold text-sm">
-                {photo.uploader || "Unknown"}
-              </p>
-            </div>
+            {photo.title && (
+              <div className="flex items-center gap-2">
+                <FiTag className="text-pink-400" size={14} />
+                <p className="text-pink-400 font-medium text-sm leading-tight">
+                  {photo.title}
+                </p>
+              </div>
+            )}
 
-            <div className="flex items-center gap-2">
+            {/* <div className="flex items-center gap-2">
               <FiCalendar className="text-gray-300" size={14} />
               <p className="text-gray-300 text-xs">
                 {new Date(photo.uploadedAt).toLocaleDateString()}
               </p>
-            </div>
+            </div> */}
 
-            {photo.title && (
-              <p className="text-white font-medium text-sm leading-tight mt-1">
-                {photo.title}
+            <div className="flex items-center gap-2">
+              <FiUser className="text-green-400" size={14} />
+              <p className="text-green-400 text-xs">
+                {photo.uploader || "Unknown"}
               </p>
-            )}
+            </div>
 
             {photo.event && (
               <div className="flex items-center gap-2">
-                <FiImage className="text-blue-400" size={14} />
-                <p className="text-blue-400 text-xs font-medium">
-                  {photo.event}
-                </p>
+                <FiImage className="text-purple-400" size={14} />
+                <p className="text-purple-400 text-xs">{photo.event}</p>
               </div>
             )}
           </div>
